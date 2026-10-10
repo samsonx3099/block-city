@@ -1,0 +1,5 @@
+services:
+  - type: web
+    name: block-city
+    runtime: node
+    startCommand: npm start
