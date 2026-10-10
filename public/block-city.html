@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Block City</title>
+  <style>
+    :root {
+      --sky-top: #86d1ff;
+      --sky-bottom: #dff7ff;
+      --ground: #4e7d3f;
+      --road: #3a3c42;
+      --player: #31a3ff;
+      --enemy: #ff6b57;
+      --panel: rgba(12, 18, 30, 0.65);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(var(--sky-top), var(--sky-bottom));
+      overflow: hidden;
+    }
+
+    #game-wrap {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: linear-gradient(#7ec7ff, #dff8ff);
+    }
+
+    #hud {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: var(--panel);
+      color: white;
+      font-size: 14px;
+      line-height: 1.4;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.2);
+      pointer-events: none;
+    }
+
+    #hud strong {
+      color: #dff6ff;
+    }
+
+    #players-count {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: var(--panel);
+      color: #dff6ff;
+      font-size: 14px;
+      font-weight: bold;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.2);
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="game-wrap">
+    <canvas id="game"></canvas>
+    <div id="hud">
+      <strong>Block City</strong><br />
+      Move: WASD / Arrow Keys<br />
+      Status: <span id="connection-status">Connecting...</span>
+    </div>
+    <div id="players-count">Players: <span id="player-count">0</span></div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const connectionStatus = document.getElementById("connection-status");
+    const playerCountDisplay = document.getElementById("player-count");
+
+    // Use relative path - will connect to same domain
+    const socket = io();
+
+    const state = {
+      player: {
+        id: "me",
+        name: "You",
+        x: 0,
+        y: 0,
+        z: 0
+      },
+      others: new Map(),
+      totalPlayers: 0
+    };
+
+    const keys = {};
+    let lastSent = 0;
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth * window.devicePixelRatio;
+      canvas.height = window.innerHeight * window.devicePixelRatio;
+      ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
+    }
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+    document.addEventListener("keydown", (e) => {
+      keys[e.key.toLowerCase()] = true;
+      keys[e.key] = true;
+    });
+
+    document.addEventListener("keyup", (e) => {
+      keys[e.key.toLowerCase()] = false;
+      keys[e.key] = false;
+    });
+
+    socket.on("connect", () => {
+      connectionStatus.textContent = "Connected";
+      connectionStatus.style.color = "#6fff6f";
+      socket.emit("join", { name: "Player" });
+    });
+
+    socket.on("disconnect", () => {
+      connectionStatus.textContent = "Disconnected";
+      connectionStatus.style.color = "#ff6b57";
+    });
+
+    socket.on("players", (players) => {
+      state.totalPlayers = players.length;
+      playerCountDisplay.textContent = state.totalPlayers;
+
+      const newMap = new Map();
+      players.forEach((p) => {
+        if (p.id === socket.id) {
+          state.player = { ...state.player, ...p };
+        } else {
+          newMap.set(p.id, p);
+        }
+      });
+      state.others = newMap;
+    });
+
+    socket.on("playerMove", (p) => {
+      if (p.id !== socket.id) {
+        state.others.set(p.id, p);
+      }
+    });
+
+    socket.on("playerLeft", (id) => {
+      state.others.delete(id);
+    });
+
+    function updatePlayer() {
+      let dx = 0;
+      let dz = 0;
+
+      if (keys["w"] || keys["arrowup"]) dz -= 1;
+      if (keys["s"] || keys["arrowdown"]) dz += 1;
+      if (keys["a"] || keys["arrowleft"]) dx -= 1;
+      if (keys["d"] || keys["arrowright"]) dx += 1;
+
+      const speed = 0.22;
+
+      if (dx !== 0 || dz !== 0) {
+        state.player.x += dx * speed;
+        state.player.z += dz * speed;
+
+        const now = performance.now();
+        if (now - lastSent > 40) {
+          socket.emit("move", {
+            x: state.player.x,
+            y: state.player.y,
+            z: state.player.z
+          });
+          lastSent = now;
+        }
+      }
+    }
+
+    function drawBackground() {
+      const w = canvas.width / window.devicePixelRatio;
+      const h = canvas.height / window.devicePixelRatio;
+
+      ctx.clearRect(0, 0, w, h);
+
+      const sky = ctx.createLinearGradient(0, 0, 0, h);
+      sky.addColorStop(0, "#77c7ff");
+      sky.addColorStop(1, "#dff7ff");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, w, h);
+
+      // ground
+      ctx.fillStyle = "#6fbf73";
+      ctx.fillRect(0, h * 0.62, w, h * 0.38);
+
+      // road
+      ctx.fillStyle = "#4d525d";
+      ctx.fillRect(w * 0.35, h * 0.62, w * 0.3, h * 0.38);
+
+      // block-city skyline
+      for (let i = 0; i < 18; i++) {
+        const x = i * 60 + 12;
+        const hgt = 40 + ((i * 31) % 120);
+        ctx.fillStyle = i % 2 ? "#d6dde4" : "#c7ced8";
+        ctx.fillRect(x, h * 0.62 - hgt, 42, hgt);
+      }
+    }
+
+    function drawPlayer(p, color) {
+      const cx = canvas.width / window.devicePixelRatio / 2 + p.x * 36;
+      const cy = canvas.height / window.devicePixelRatio * 0.72 + p.z * 8;
+
+      ctx.fillStyle = color;
+      ctx.fillRect(cx - 14, cy - 20, 28, 28);
+
+      ctx.fillStyle = "rgba(0,0,0,0.25)";
+      ctx.fillRect(cx - 18, cy + 8, 36, 8);
+
+      // Draw player name
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 12px Arial";
+      ctx.textAlign = "center";
+      ctx.fillText(p.name, cx, cy - 28);
+    }
+
+    function draw() {
+      drawBackground();
+
+      drawPlayer(state.player, "#31a3ff");
+
+      state.others.forEach((p) => {
+        drawPlayer(p, "#ff6b57");
+      });
+
+      updatePlayer();
+      requestAnimationFrame(draw);
+    }
+
+    requestAnimationFrame(draw);
+  </script>
+</body>
+</html>
