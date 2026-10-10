@@ -2,19 +2,18 @@
   "name": "block-city",
   "version": "1.0.0",
   "description": "A 2.5D HTML city game with multiplayer support",
-  "main": "index.js",
+  "main": "server/index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node server/index.js",
     "dev": "node server/index.js"
   },
   "engines": {
-    "node": "18.x"
+    "node": "20.x"
   },
   "keywords": ["game", "html5", "canvas"],
   "author": "samsonx3099",
   "license": "MIT",
   "dependencies": {
-    "express": "^4.18.2",
     "socket.io": "^4.8.1"
   }
 }
