@@ -4,7 +4,9 @@ const path = require("path");
 const { Server } = require("socket.io");
 
 const PORT = process.env.PORT || 3000;
-const publicDir = path.join(__dirname, "..", "public");
+const rootDir = path.join(__dirname, "..");
+const publicDir = path.join(rootDir, "public");
+const readmePath = path.join(rootDir, "README.md");
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -16,8 +18,29 @@ const mimeTypes = {
   ".svg": "image/svg+xml"
 };
 
+function sendFile(res, filePath) {
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
+      res.writeHead(404);
+      res.end("Not found");
+      return;
+    }
+
+    const ext = path.extname(filePath).toLowerCase();
+    res.writeHead(200, {
+      "Content-Type": mimeTypes[ext] || "application/octet-stream"
+    });
+    res.end(data);
+  });
+}
+
 const server = http.createServer((req, res) => {
-  const requestPath = req.url === "/" ? "/block-city.html" : req.url.split("?")[0];
+  const requestPath = req.url.split("?")[0];
+
+  if (requestPath === "/" || requestPath === "/index.html" || requestPath === "/block-cityv5.html") {
+    return sendFile(res, readmePath);
+  }
+
   const safePath = path.normalize(path.join(publicDir, requestPath));
 
   if (!safePath.startsWith(publicDir)) {
@@ -26,19 +49,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  fs.readFile(safePath, (err, data) => {
-    if (err) {
-      res.writeHead(404);
-      res.end("Not found");
-      return;
-    }
-
-    const ext = path.extname(safePath).toLowerCase();
-    res.writeHead(200, {
-      "Content-Type": mimeTypes[ext] || "application/octet-stream"
-    });
-    res.end(data);
-  });
+  sendFile(res, safePath);
 });
 
 const io = new Server(server, {
@@ -72,7 +83,6 @@ io.on("connection", (socket) => {
     player.x = x;
     player.y = y;
     player.z = z;
-
     socket.broadcast.emit("playerMove", player);
   });
 
