@@ -29,14 +29,17 @@ This is **v6**. It adds online multiplayer through Socket.io, so it needs the No
 
 ```
 block-city/
-├── server.js          # Node + Express + Socket.io server
-├── package.json
-├── README.md
-└── public/
-    └── index.html     # the v6 game (block-cityv6.html, renamed)
+├── server/
+│   └── index.js       # Node + Socket.io server (also serves public/)
+├── public/
+│   ├── index.html     # the v6 game, served at /
+│   └── block-cityv5.html   # older version, kept for reference
+├── package.json       # `npm start` runs server/index.js
+├── render.yaml        # Render web service config
+└── README.md          # this file (documentation only, not served)
 ```
 
-Important: the game page must be saved as **`index.html`** (not `README.md`). If an older copy of the game was saved under another name, the host will keep serving that older version, so replace it with the v6 file.
+The game page lives in **`public/index.html`**. The server serves it at `/`. `README.md` is documentation only. To release a new game version, replace `public/index.html`.
 
 The page loads Socket.io from `/socket.io/socket.io.js`, which the Node server provides automatically, and connects back to the same origin. If you ever host the page separately from the server, set `SERVER_URL` near the top of the script in `index.html` to your server's address.
 
@@ -52,12 +55,12 @@ Then open `http://localhost:3000` in two browser tabs or devices to test multipl
 ## Deploy on Render
 
 1. Push the repo to GitHub.
-2. In Render, create a **Web Service** (not a Static Site) and connect the repo.
+2. In Render, use a **Web Service** (not a Static Site) connected to the repo. `render.yaml` already describes it.
 3. Build command: `npm install`
-4. Start command: `node server.js`
-5. The server must listen on `process.env.PORT`.
+4. Start command: `npm start` (runs `node server/index.js`)
+5. The server listens on `process.env.PORT`. A `/health` endpoint is available for health checks.
 
-Every redeploy picks up the latest `public/index.html`, so make sure the v6 file is what is committed.
+Every redeploy picks up the latest `public/index.html`.
 
 ## Server events (client ↔ server contract)
 
@@ -90,5 +93,5 @@ The v6 client expects the server to handle and relay these Socket.io events. Pla
 
 - **Status shows "Solo (no socket.io)"**: the page is not being served by the Node server. Check that `/socket.io/socket.io.js` loads.
 - **Status shows "Offline" or "Reconnecting…"**: the server is down or asleep (Render free instances sleep when idle). Wait a few seconds and reload.
-- **Still seeing the old game after deploying**: confirm the v6 file is committed as `public/index.html` and trigger a redeploy. Also hard-refresh the browser or clear the site's cached data.
+- **Still seeing the old game after deploying**: confirm `public/index.html` is the v6 file and trigger a redeploy. Also hard-refresh the browser or clear the site's cached data.
 - **Chat only appears on your own screen**: you are offline, so messages are shown locally but not sent.

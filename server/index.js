@@ -4,19 +4,17 @@ const path = require("path");
 const { Server } = require("socket.io");
 
 const PORT = process.env.PORT || 3000;
-const rootDir = path.join(__dirname, "..");
-const publicDir = path.join(rootDir, "public");
-const readmePath = path.join(rootDir, "README.md");
+const publicDir = path.join(__dirname, "..", "public");
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
-  ".md": "text/html; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
   ".jpg": "image/jpeg",
-  ".svg": "image/svg+xml"
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon"
 };
 
 function sendFile(res, filePath) {
@@ -26,80 +24,156 @@ function sendFile(res, filePath) {
       res.end("Not found");
       return;
     }
-
     const ext = path.extname(filePath).toLowerCase();
-    const contentType = mimeTypes[ext] || "application/octet-stream";
-    
     res.writeHead(200, {
-      "Content-Type": contentType,
+      "Content-Type": mimeTypes[ext] || "application/octet-stream",
       "Cache-Control": "no-cache, no-store, must-revalidate"
     });
     res.end(data);
   });
 }
 
+// Socket.io answers /socket.io/* requests itself; everything else lands here.
 const server = http.createServer((req, res) => {
-  const requestPath = req.url.split("?")[0];
+  let requestPath = decodeURIComponent(req.url.split("?")[0]);
 
-  // Serve README.md as the game for root paths
-  if (requestPath === "/" || requestPath === "/index.html" || requestPath === "/block-cityv5.html") {
-    return sendFile(res, readmePath);
+  if (requestPath === "/health") {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("ok");
+    return;
   }
+  if (requestPath === "/") requestPath = "/index.html";
 
-  // Try to serve from public directory
   const safePath = path.normalize(path.join(publicDir, requestPath));
-
   if (!safePath.startsWith(publicDir)) {
     res.writeHead(403, { "Content-Type": "text/plain" });
     res.end("Forbidden");
     return;
   }
-
   sendFile(res, safePath);
 });
 
-const io = new Server(server, {
-  cors: {
-    origin: "*"
-  }
-});
+const io = new Server(server, { cors: { origin: "*" } });
 
-const players = new Map();
+// ---------------------------------------------------------------
+// Multiplayer (Block City v6 protocol, see README)
+// ---------------------------------------------------------------
+const PROXIMITY = 450; // world pixels for "Nearby" chat
+const players = {};
+
+function num(v) {
+  v = Number(v);
+  return Number.isFinite(v) ? v : 0;
+}
+
+// Can player b hear player a in "Nearby" mode?
+function isNear(a, b) {
+  if (!a || !b) return false;
+  if (a.id === b.id) return true;
+  if (a.scene !== b.scene) return false;
+  if (a.scene === "apartment") {
+    return (
+      a.visiting === b.id ||
+      b.visiting === a.id ||
+      (a.visiting && a.visiting === b.visiting) ||
+      (!a.visiting && !b.visiting)
+    );
+  }
+  if (a.block !== b.block) return false;
+  return Math.hypot(a.x - b.x, a.y - b.y) <= PROXIMITY;
+}
 
 io.on("connection", (socket) => {
   console.log(`Player connected: ${socket.id}`);
 
-  socket.on("join", ({ name }) => {
-    players.set(socket.id, {
+  socket.on("state", (s) => {
+    if (!s || typeof s !== "object") return;
+    const p = {
       id: socket.id,
-      name: name || "Player",
-      x: 0,
-      y: 0,
-      z: 0
-    });
-
-    console.log(`${name || "Player"} joined. Total players: ${players.size}`);
-    io.emit("players", Array.from(players.values()));
+      name: String(s.name || "Player").slice(0, 16),
+      x: num(s.x),
+      y: num(s.y),
+      block: num(s.block),
+      facing: s.facing || "down",
+      sitting: !!s.sitting,
+      inTaxi: !!s.inTaxi,
+      address: String(s.address || "").slice(0, 40),
+      color: String(s.color || "#e74c3c").slice(0, 20),
+      scene: s.scene === "apartment" ? "apartment" : "street",
+      visiting: s.visiting ? String(s.visiting) : null,
+      taxi:
+        s.taxi && typeof s.taxi === "object"
+          ? { x: num(s.taxi.x), y: num(s.taxi.y), state: String(s.taxi.state || "") }
+          : null
+    };
+    players[socket.id] = p;
+    socket.broadcast.emit("state", p);
   });
 
-  socket.on("move", ({ x, y, z }) => {
-    const player = players.get(socket.id);
-    if (!player) return;
+  socket.on("chat", (m) => {
+    const me = players[socket.id];
+    if (!m || typeof m.text !== "string") return;
+    const text = m.text.trim().slice(0, 140);
+    if (!text) return;
+    const mode = m.mode === "phone" ? "phone" : "proximity";
+    const msg = {
+      id: socket.id,
+      name: me ? me.name : "Player",
+      text,
+      mode,
+      x: me ? me.x : 0,
+      y: me ? me.y : 0,
+      color: me ? me.color : "#ffffff"
+    };
+    if (mode === "phone") {
+      io.emit("chat", msg);
+    } else {
+      socket.emit("chat", msg); // always echo to the sender
+      Object.keys(players).forEach((id) => {
+        if (id !== socket.id && isNear(me, players[id])) io.to(id).emit("chat", msg);
+      });
+    }
+  });
 
-    player.x = x;
-    player.y = y;
-    player.z = z;
-    socket.broadcast.emit("playerMove", player);
+  socket.on("visit_req", (m) => {
+    if (!m || !m.to || !players[m.to]) return;
+    const me = players[socket.id];
+    io.to(m.to).emit("visit_req", {
+      from: socket.id,
+      fromName: String(m.fromName || (me && me.name) || "Someone").slice(0, 16),
+      fromAddress: String(m.fromAddress || (me && me.address) || "").slice(0, 40)
+    });
+  });
+
+  socket.on("visit_accept", (m) => {
+    if (!m || !m.to || !players[m.to]) return;
+    const host = players[socket.id];
+    const sp = m.aptSpawn || {};
+    io.to(m.to).emit("visit_accept", {
+      hostId: socket.id,
+      hostName: host ? host.name : "Friend",
+      hostAddress: host ? host.address : "",
+      hostBlock: 0,
+      aptSpawn: { x: num(sp.x), y: num(sp.y) }
+    });
+  });
+
+  socket.on("visit_decline", (m) => {
+    if (!m || !m.to) return;
+    const host = players[socket.id];
+    io.to(m.to).emit("visit_decline", { hostName: host ? host.name : "Host" });
+  });
+
+  socket.on("visit_leave", (m) => {
+    if (!m || !m.hostId) return;
+    const me = players[socket.id];
+    io.to(m.hostId).emit("visit_leave", { visitorName: me ? me.name : "Visitor" });
   });
 
   socket.on("disconnect", () => {
-    const player = players.get(socket.id);
-    if (player) {
-      console.log(`${player.name} disconnected. Total players: ${players.size - 1}`);
-    }
-    players.delete(socket.id);
-    io.emit("players", Array.from(players.values()));
-    socket.broadcast.emit("playerLeft", socket.id);
+    console.log(`Player disconnected: ${socket.id}`);
+    delete players[socket.id];
+    io.emit("left", { id: socket.id });
   });
 });
 
